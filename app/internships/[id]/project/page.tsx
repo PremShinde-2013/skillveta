@@ -10,6 +10,10 @@ import { Badge } from "@/components/ui/badge";
 import { Loader2, Github, UploadCloud, ShieldCheck, Lock } from "lucide-react";
 import { toast } from "sonner";
 import PastSubmissions from "./PastAttempts";
+import {
+  canCreateSubmission,
+  getNextAttemptNumber,
+} from "@/lib/internship/attemptRules";
 
 export default function InternshipProjectPage() {
     const supabase = createClient();
@@ -128,41 +132,46 @@ export default function InternshipProjectPage() {
                 pptUrl = urlData.publicUrl;
             }
 
-            // Check latest submission
-            const latest = submissions[0];
-            if (latest?.status === "submitted") {
-                toast.error("Your last submission is still under review");
-                setLoading(false);
-                return;
-            }
+       // Check latest submission
+const latest = submissions[0];
 
-            if (latest && (latest.status === "resubmit_required" || latest.status === "rejected")) {
-                await supabase
-                    .from("internship_project_submissions")
-                    .update({
-                        github_link: githubLink,
-                        ppt_url: pptUrl,
-                        attempt_number: latest.attempt_number + 1,
-                        submitted_at: new Date().toISOString(),
-                        status: "submitted"
-                    })
-                    .eq("id", latest.id);
+if (!canCreateSubmission(latest?.status)) {
+    if (latest?.status === "submitted") {
+        toast.error("Your last submission is still under review");
+    } else if (latest?.status === "approved") {
+        toast.error("Your project has already been approved");
+    }
 
-                toast.success("Resubmission uploaded successfully 🎉");
-            } else {
-                await supabase
-                    .from("internship_project_submissions")
-                    .insert({
-                        project_id: project.id,
-                        user_internship_id: userInternshipId,
-                        github_link: githubLink,
-                        ppt_url: pptUrl,
-                        attempt_number: 1,
-                        status: "submitted"
-                    });
+    setLoading(false);
+    return;
+}
 
-                toast.success("Submission uploaded successfully 🎉");
-            }
+// Calculate the next attempt number without modifying previous attempts
+const nextAttemptNumber = getNextAttemptNumber(submissions);
+
+const { error: submissionError } = await supabase
+    .from("internship_project_submissions")
+    .insert({
+        project_id: project.id,
+        user_internship_id: userInternshipId,
+        github_link: githubLink,
+        ppt_url: pptUrl,
+        attempt_number: nextAttemptNumber,
+        status: "submitted",
+        submitted_at: new Date().toISOString(),
+    });
+
+if (submissionError) {
+    throw submissionError;
+}
+
+if (latest) {
+    toast.success(
+        `Resubmission #${nextAttemptNumber} uploaded successfully 🎉`
+    );
+} else {
+    toast.success("Submission uploaded successfully 🎉");
+}
 
             // Refresh submissions
             const { data: submissionData } = await supabase
